@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Foto ke tekstur wajah</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap">
+<style>
+:root{--bg:#eef1f4;--panel:#fff;--ink:#14202b;--mute:#5d6b78;--line:#cfd7de;--acc:#0f7b6c;--onacc:#fff;--warn:#b3261e;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10181f;--panel:#18232c;--ink:#e6edf2;--mute:#92a1ae;--line:#2b3a46;--acc:#4fd1b8;--onacc:#06201b;--warn:#ff8a80;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#10181f;--panel:#18232c;--ink:#e6edf2;--mute:#92a1ae;--line:#2b3a46;--acc:#4fd1b8;--onacc:#06201b;--warn:#ff8a80;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.5 "Bricolage Grotesque",system-ui,sans-serif}
+main{max-width:560px;margin:0 auto;padding:20px 16px 48px}
+h1{font-weight:800;font-size:28px;line-height:1.1;margin:8px 0 6px}
+p.s{color:var(--mute);margin:0 0 18px;font-size:15px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+h2{font-size:15px;font-weight:600;margin:0 0 10px}
+label.f{display:block;border:1.5px dashed var(--line);border-radius:8px;padding:12px;margin-bottom:8px;color:var(--mute);font-size:14px}
+label.f b{display:block;color:var(--ink);font-weight:600}
+input[type=file]{display:none}
+canvas{width:100%;height:auto;display:block;border-radius:6px;background:#0002}
+.r{display:grid;grid-template-columns:92px 1fr;align-items:center;gap:8px;font-size:14px;margin-top:8px}
+input[type=range]{width:100%;accent-color:var(--acc)}
+button{font:600 16px "Bricolage Grotesque",system-ui,sans-serif;width:100%;padding:14px;border:0;border-radius:8px;background:var(--acc);color:var(--onacc);margin-top:10px}
+button.g{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
+button:disabled{opacity:.4}
+#st{font-size:14px;color:var(--mute);min-height:20px;margin-top:8px}
+#st.e{color:var(--warn)}
+</style>
+</head>
+<body>
+<main>
+<h1>Foto jadi tekstur wajah</h1>
+<p class="s">Untuk kepala format CR7. Bentuk kepala tetap, hanya tekstur wajah yang diganti dari fotomu. Semua diproses di ponselmu.</p>
+
+<section>
+<h2>1. Pilih file</h2>
+<label class="f"><b id="n1">Kepala GLB (format CR7)</b>ketuk untuk memilih<input id="f1" type="file"></label>
+<label class="f"><b id="n2">Foto wajah (menghadap depan)</b>ketuk untuk memilih<input id="f2" type="file" accept="image/*"></label>
+</section>
+
+<section>
+<h2>2. Cocokkan jaring dengan wajah</h2>
+<canvas id="cv" width="600" height="400"></canvas>
+<div class="r">Ukuran<input id="sc" type="range" min="0.4" max="2.5" step="0.005" value="1"></div>
+<div class="r">Geser kiri-kanan<input id="ox" type="range" min="-0.5" max="0.5" step="0.002" value="0"></div>
+<div class="r">Geser atas-bawah<input id="oy" type="range" min="-0.5" max="0.5" step="0.002" value="0"></div>
+<div class="r">Putar<input id="ro" type="range" min="-25" max="25" step="0.1" value="0"></div>
+<div class="r">Batas dahi<input id="cu" type="range" min="1.55" max="1.82" step="0.002" value="1.72"></div>
+<p class="s" style="margin:10px 0 0;font-size:13px">Garis jaring harus pas di mata, hidung, mulut, dan dagu. Garis merah menandai batas atas; rambut di atasnya tidak diubah.</p>
+</section>
+
+<section>
+<h2>3. Terapkan dan unduh</h2>
+<button id="bk" disabled>Terapkan foto ke tekstur</button>
+<canvas id="pv" width="256" height="256" style="margin-top:10px;display:none"></canvas>
+<button id="d1" class="g" disabled>Unduh GLB (dalam .zip)</button>
+<button id="d2" class="g" disabled>Unduh tekstur PNG</button>
+<div id="st"></div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let G=null,M=null,photo=null,outCv=null;
+const st=(t,e)=>{$('st').textContent=t;$('st').className=e?'e':''};
+function parse(buf){const dv=new DataView(buf),jl=dv.getUint32(12,true);
+ return{json:JSON.parse(new TextDecoder().decode(new Uint8Array(buf,20,jl))),bin:new Uint8Array(buf,20+jl+8,dv.getUint32(20+jl,true))}}
+function acc(g,i){const a=g.json.accessors[i],bv=g.json.bufferViews[a.bufferView],n={SCALAR:1,VEC2:2,VEC3:3}[a.type],
+ sz={5126:4,5123:2,5125:4}[a.componentType],stride=bv.byteStride||n*sz,base=(bv.byteOffset||0)+(a.byteOffset||0),
+ dv=new DataView(g.bin.buffer,g.bin.byteOffset),out=new Float32Array(a.count*n);
+ for(let k=0;k<a.count;k++)for(let c=0;c<n;c++){const o=base+k*stride+c*sz;
+  out[k*n+c]=a.componentType==5126?dv.getFloat32(o,true):a.componentType==5123?dv.getUint16(o,true):dv.getUint32(o,true)}
+ return out}
+$('f1').onchange=async e=>{try{const f=e.target.files[0];if(!f)return;const g=parse(await f.arrayBuffer());
+ const p=g.json.meshes[0].primitives[0],A=p.attributes,im=g.json.images[0],bv=g.json.bufferViews[im.bufferView],o=bv.byteOffset||0;
+ g.imgBV=im.bufferView;
+ M={pos:acc(g,A.POSITION),nor:acc(g,A.NORMAL),uv:acc(g,A.TEXCOORD_0),idx:acc(g,p.indices),
+  bmp:await createImageBitmap(new Blob([g.bin.slice(o,o+bv.byteLength)],{type:im.mimeType||'image/png'}))};
+ G=g;$('n1').textContent='✓ '+f.name;st('');draw();ready()}catch(x){st('GLB tidak bisa dibaca: '+x.message,1)}};
+$('f2').onchange=e=>{const f=e.target.files[0];if(!f)return;const im=new Image();
+ im.onload=()=>{photo=im;$('n2').textContent='✓ '+f.name;draw();ready()};im.src=URL.createObjectURL(f)};
+['sc','ox','oy','ro','cu'].forEach(i=>$(i).oninput=draw);
+function ready(){$('bk').disabled=!(G&&photo)}
+function P(){const w=photo.width,h=photo.height,S=1.7*h*$('sc').value,r=$('ro').value*Math.PI/180,
+ cx=w/2+$('ox').value*w,cy=h*0.3+$('oy').value*h,co=Math.cos(r),si=Math.sin(r);
+ return{cut:+$('cu').value,f:(x,y)=>{const a=x*S,b=-(y-1.67)*S;return[cx+a*co-b*si,cy+a*si+b*co]}}}
+function draw(){const c=$('cv'),x=c.getContext('2d');
+ if(!photo){x.clearRect(0,0,c.width,c.height);return}
+ const k=Math.min(1,900/photo.width);c.width=photo.width*k;c.height=photo.height*k;x.drawImage(photo,0,0,c.width,c.height);
+ if(!M)return;const p=P(),{pos,nor,idx}=M;x.lineWidth=1;x.strokeStyle='rgba(79,209,184,.55)';x.beginPath();
+ for(let t=0;t<idx.length;t+=3){const a=idx[t],b=idx[t+1],d=idx[t+2];
+  if(nor[a*3+2]+nor[b*3+2]+nor[d*3+2]<1.5||pos[a*3+1]>p.cut)continue;
+  const A=p.f(pos[a*3],pos[a*3+1]),B=p.f(pos[b*3],pos[b*3+1]),C=p.f(pos[d*3],pos[d*3+1]);
+  x.moveTo(A[0]*k,A[1]*k);x.lineTo(B[0]*k,B[1]*k);x.lineTo(C[0]*k,C[1]*k);x.closePath()}
+ x.stroke();const l=p.f(-.2,p.cut),r=p.f(.2,p.cut);x.strokeStyle='#ff3b30';x.lineWidth=2;x.beginPath();x.moveTo(l[0]*k,l[1]*k);x.lineTo(r[0]*k,r[1]*k);x.stroke()}
+$('bk').onclick=()=>{st('Memproses…');$('bk').disabled=true;setTimeout(()=>{try{bake();st('Selesai. Periksa pratinjau, lalu unduh.')}catch(x){st('Gagal: '+x.message,1)}ready()},30)};
+function bake(){const W=M.bmp.width,H=M.bmp.height,c=document.createElement('canvas');c.width=W;c.height=H;
+ const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(M.bmp,0,0);const id=x.getImageData(0,0,W,H),d=id.data;
+ const pw=photo.width,ph=photo.height,pc=document.createElement('canvas');pc.width=pw;pc.height=ph;
+ const px=pc.getContext('2d');px.drawImage(photo,0,0);const pd=px.getImageData(0,0,pw,ph).data;
+ const p=P(),{pos,nor,uv,idx}=M,n=pos.length/3,wv=new Float32Array(n),sx=new Float32Array(n),sy=new Float32Array(n);
+ for(let i=0;i<n;i++){const q=p.f(pos[i*3],pos[i*3+1]);sx[i]=q[0];sy[i]=q[1];
+  wv[i]=pos[i*3+1]>p.cut?0:Math.min(1,Math.max(0,(nor[i*3+2]-.35)/.4))}
+ for(let t=0;t<idx.length;t+=3){const a=idx[t],b=idx[t+1],e=idx[t+2];if(wv[a]+wv[b]+wv[e]===0)continue;
+  const ax=uv[a*2]*W,ay=uv[a*2+1]*H,bx=uv[b*2]*W,by=uv[b*2+1]*H,cx=uv[e*2]*W,cy=uv[e*2+1]*H,
+  den=(by-cy)*(ax-cx)+(cx-bx)*(ay-cy);if(Math.abs(den)<1e-9)continue;
+  const x0=Math.max(0,Math.floor(Math.min(ax,bx,cx))),x1=Math.min(W-1,Math.ceil(Math.max(ax,bx,cx))),
+  y0=Math.max(0,Math.floor(Math.min(ay,by,cy))),y1=Math.min(H-1,Math.ceil(Math.max(ay,by,cy)));
+  for(let y=y0;y<=y1;y++)for(let xx=x0;xx<=x1;xx++){const X=xx+.5,Y=y+.5,
+   l1=((by-cy)*(X-cx)+(cx-bx)*(Y-cy))/den,l2=((cy-ay)*(X-cx)+(ax-cx)*(Y-cy))/den,l3=1-l1-l2;
+   if(l1<-.01||l2<-.01||l3<-.01)continue;const w=l1*wv[a]+l2*wv[b]+l3*wv[e];if(w<=0)continue;
+   const u=Math.round(l1*sx[a]+l2*sx[b]+l3*sx[e]),v=Math.round(l1*sy[a]+l2*sy[b]+l3*sy[e]);
+   if(u<0||v<0||u>=pw||v>=ph)continue;const o=(y*W+xx)*4;if(d[o+3]<250)continue;const q=(v*pw+u)*4;
+   d[o]+=(pd[q]-d[o])*w;d[o+1]+=(pd[q+1]-d[o+1])*w;d[o+2]+=(pd[q+2]-d[o+2])*w}}
+ x.putImageData(id,0,0);outCv=c;const pv=$('pv');pv.style.display='block';pv.width=512;pv.height=Math.round(512*H/W);
+ pv.getContext('2d').drawImage(c,0,0,pv.width,pv.height);$('d1').disabled=$('d2').disabled=false}
+const crcT=(()=>{const t=[];for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+function crc(b){let c=-1;for(let i=0;i<b.length;i++)c=crcT[(c^b[i])&255]^(c>>>8);return(~c)>>>0}
+function zip(name,data){const nb=new TextEncoder().encode(name),c=crc(data),L=30+nb.length,C=46+nb.length,o=new Uint8Array(L+data.length+C+22),v=new DataView(o.buffer);
+ v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);v.setUint32(14,c,true);v.setUint32(18,data.length,true);v.setUint32(22,data.length,true);v.setUint16(26,nb.length,true);o.set(nb,30);o.set(data,L);
+ let p=L+data.length;v.setUint32(p,0x02014b50,true);v.setUint16(p+4,20,true);v.setUint16(p+6,20,true);v.setUint32(p+16,c,true);v.setUint32(p+20,data.length,true);v.setUint32(p+24,data.length,true);v.setUint16(p+28,nb.length,true);o.set(nb,p+46);
+ p+=C;v.setUint32(p,0x06054b50,true);v.setUint16(p+8,1,true);v.setUint16(p+10,1,true);v.setUint32(p+12,C,true);v.setUint32(p+16,L+data.length,true);return o}
+const png=()=>new Promise(r=>outCv.toBlob(async b=>r(new Uint8Array(await b.arrayBuffer())),'image/png'));
+async function glb(){const img=await png(),j=structuredClone(G.json),parts=[];let off=0;
+ j.bufferViews.forEach((bv,i)=>{const o=bv.byteOffset||0,dt=i===G.imgBV?img:G.bin.subarray(o,o+bv.byteLength);off=(off+3)&~3;parts.push([off,dt]);bv.byteOffset=off;bv.byteLength=dt.length;off+=dt.length});
+ const tot=(off+3)&~3,bin=new Uint8Array(tot);parts.forEach(([o,dt])=>bin.set(dt,o));j.buffers[0].byteLength=tot;
+ const js=new TextEncoder().encode(JSON.stringify(j)),jl=(js.length+3)&~3,out=new Uint8Array(28+jl+tot).fill(32),dv=new DataView(out.buffer);
+ dv.setUint32(0,0x46546C67,true);dv.setUint32(4,2,true);dv.setUint32(8,out.length,true);dv.setUint32(12,jl,true);dv.setUint32(16,0x4E4F534A,true);out.set(js,20);
+ out.fill(0,20+jl+8);dv.setUint32(20+jl,tot,true);dv.setUint32(24+jl,0x004E4942,true);out.set(bin,28+jl);return out}
+async function save(name,data){try{const dl=await claude.use('downloads');if(!dl)return st('Unduhan tidak tersedia di tampilan ini. Buka artefak ini langsung di aplikasi Claude.',1);
+ await dl.save({filename:name,data});st('Tersimpan: '+name)}catch(x){st(x&&x.code==='declined'?'Unduhan dibatalkan.':'Gagal menyimpan: '+(x&&x.message||x),1)}}
+$('d1').onclick=async()=>save('head_foto.glb.zip',zip('head_foto.glb',await glb()));
+$('d2').onclick=async()=>save('head_foto_atlas.png',await png());
+</script>
+</body>
+</html>
