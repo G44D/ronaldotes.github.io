@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Foto jadi kepala 3D (GLB)</title>
+<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
+<style>
+:root{--bg:#0f1720;--card:#18222d;--tx:#e6edf5;--mu:#8fa0b3;--ac:#4fd1b5;--bd:#2a3846}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 system-ui,sans-serif;padding:20px;max-width:720px;margin:auto}
+h1{font-size:26px;margin:8px 0}p.s{color:var(--mu);margin:0 0 16px}
+.c{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:16px;margin:14px 0}
+.c h2{font-size:17px;margin:0 0 10px}label{display:block;color:var(--mu);font-size:14px;margin:8px 0 2px}
+input,select{width:100%;padding:10px;border-radius:10px;border:1px solid var(--bd);background:#0f1720;color:var(--tx);font-size:15px}
+input[type=range]{padding:0}input[type=color]{height:44px;padding:2px}
+button{width:100%;padding:14px;border-radius:12px;border:1px solid var(--bd);background:var(--card);color:var(--tx);font-size:16px;margin-top:10px}
+button.p{background:var(--ac);color:#06241d;font-weight:700;border:0}
+canvas,model-viewer{width:100%;border-radius:12px;display:block;margin-top:10px;background:#000}
+model-viewer{height:380px;background:#1b1030}#st{color:var(--mu);font-size:14px;min-height:22px;margin-top:8px}
+.r{display:grid;grid-template-columns:1fr 1fr;gap:10px}small{color:var(--mu)}
+</style></head><body>
+<h1>Foto jadi kepala 3D</h1>
+<p class="s">Satu foto wajah → tekstur wajah + warna rambut pada kepala format CR7 → unduh GLB. Foto diproses di perangkatmu.</p>
+
+<div class="c"><h2>1. Pilih foto</h2>
+<input type="file" id="fp" accept="image/*">
+<label>Template kepala (CR7_head_v2.glb). Otomatis diambil dari folder yang sama; jika gagal, pilih manual:</label>
+<input type="file" id="fg" accept=".glb">
+</div>
+
+<div class="c"><h2>2. Analisis Grok AI (opsional)</h2>
+<small>Grok membaca foto untuk warna rambut, gaya rambut, dan jenggot. Tanpa kunci, warna rambut diambil langsung dari piksel foto.</small>
+<label>API key xAI</label><input id="key" type="password" placeholder="xai-...">
+<div class="r"><div><label>Model</label><input id="mdl" value="grok-4"></div>
+<div><label>Endpoint / proxy</label><input id="ep" value="https://api.x.ai/v1/chat/completions"></div></div>
+<small>Untuk website publik, arahkan Endpoint ke proxy servermu agar API key tidak terlihat pengunjung.</small>
+<div id="gi" style="margin-top:8px;color:var(--mu);font-size:14px"></div>
+</div>
+
+<div class="c"><h2>3. Cocokkan jaring dengan wajah</h2>
+<canvas id="pv"></canvas>
+<label>Ukuran</label><input type="range" id="sc" min="0.8" max="1.25" step="0.005" value="1">
+<label>Geser kiri/kanan</label><input type="range" id="tx" min="-60" max="60" value="0">
+<label>Geser atas/bawah</label><input type="range" id="ty" min="-60" max="60" value="0">
+<div class="r"><div><label>Warna rambut</label><input type="color" id="hc" value="#2a1d14"></div>
+<div><label>Kekuatan warna rambut</label><input type="range" id="hs" min="0" max="1" step="0.05" value="1"></div></div>
+</div>
+
+<div class="c"><h2>4. Terapkan dan unduh</h2>
+<button class="p" id="go">Buat kepala 3D</button>
+<div id="st"></div>
+<canvas id="out" width="2048" height="2048" style="display:none"></canvas>
+<model-viewer id="mv" camera-controls auto-rotate shadow-intensity="0" style="display:none"></model-viewer>
+<button id="dg" disabled>Unduh GLB</button>
+<button id="dp" disabled>Unduh tekstur PNG</button>
+</div>
+
+<script type="module">
+import {FaceLandmarker,FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+const $=i=>document.getElementById(i),S=2048,Q=1088,K=1100/700;
+// [indeks MediaPipe, x, y] target pada atlas kepala CR7 (koordinat pratinjau 700px)
+const KP=[[10,330,105],[168,328,235],[1,330,330],[152,322,495],[33,228,240],[133,298,238],[362,358,238],[263,430,240],
+[61,282,402],[291,375,402],[13,328,392],[14,326,412],[105,255,205],[334,400,205],[234,128,320],[454,535,320],
+[172,190,450],[397,460,450],[129,305,338],[358,358,338]].map(([i,x,y])=>[i,x*K,y*K]);
+let glb=null,atlas=null,pc=document.createElement('canvas'),lm=null,lmk=null,outBlob=null,glbBlob=null,info=null;
+const st=t=>$('st').textContent=t;
+
+async function getLandmarker(){
+ if(lmk)return lmk;
+ const fs=await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+ lmk=await FaceLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"},runningMode:"IMAGE",numFaces:1});
+ return lmk;}
+
+function parseGLB(buf){
+ const dv=new DataView(buf),jl=dv.getUint32(12,true);
+ const json=JSON.parse(new TextDecoder().decode(new Uint8Array(buf,20,jl)));
+ const bo=20+jl+8,bl=dv.getUint32(20+jl,true);
+ return {json,bin:new Uint8Array(buf,bo,bl)};}
+function buildGLB(g,png){
+ const j=JSON.parse(JSON.stringify(g.json)),bvs=j.bufferViews,im=j.images[0].bufferView;
+ const ord=bvs.map((_,i)=>i).sort((a,b)=>(bvs[a].byteOffset||0)-(bvs[b].byteOffset||0));
+ const parts=[];let off=0;
+ for(const i of ord){const b=bvs[i],o=b.byteOffset||0;
+  const d=i===im?png:g.bin.subarray(o,o+b.byteLength),pad=(4-d.length%4)%4;
+  b.byteOffset=off;b.byteLength=d.length;parts.push(d,new Uint8Array(pad));off+=d.length+pad;}
+ j.buffers[0].byteLength=off;j.images[0].mimeType="image/png";
+ let js=new TextEncoder().encode(JSON.stringify(j));const jp=(4-js.length%4)%4;
+ const jb=new Uint8Array(js.length+jp).fill(32);jb.set(js);
+ const tot=12+8+jb.length+8+off,out=new Uint8Array(tot),dv=new DataView(out.buffer);
+ dv.setUint32(0,0x46546C67,true);dv.setUint32(4,2,true);dv.setUint32(8,tot,true);
+ dv.setUint32(12,jb.length,true);dv.setUint32(16,0x4E4F534A,true);out.set(jb,20);
+ let p=20+jb.length;dv.setUint32(p,off,true);dv.setUint32(p+4,0x004E4942,true);p+=8;
+ for(const d of parts){out.set(d,p);p+=d.length;}
+ return out;}
+
+async function loadGLB(buf){
+ glb=parseGLB(buf);const j=glb.json,b=j.bufferViews[j.images[0].bufferView];
+ const png=glb.bin.slice(b.byteOffset||0,(b.byteOffset||0)+b.byteLength);
+ atlas=await createImageBitmap(new Blob([png],{type:"image/png"}));}
+async function autoGLB(){try{const r=await fetch("CR7_head_v2.glb");if(r.ok){await loadGLB(await r.arrayBuffer());st("Template kepala siap.");}}catch(e){}}
+autoGLB();
+$('fg').onchange=async e=>{await loadGLB(await e.target.files[0].arrayBuffer());st("Template kepala siap.");};
+
+$('fp').onchange=async e=>{
+ const f=e.target.files[0];if(!f)return;st("Membaca foto…");
+ const bm=await createImageBitmap(f),m=Math.min(1,1536/Math.max(bm.width,bm.height));
+ pc.width=Math.round(bm.width*m);pc.height=Math.round(bm.height*m);pc.getContext('2d').drawImage(bm,0,0,pc.width,pc.height);
+ st("Mendeteksi wajah…");
+ try{const r=(await getLandmarker()).detect(pc);
+  if(!r.faceLandmarks.length){st("Wajah tidak terdeteksi. Pakai foto menghadap depan dan terang.");lm=null;return;}
+  lm=r.faceLandmarks[0].map(p=>[p.x*pc.width,p.y*pc.height]);}
+ catch(err){st("Gagal memuat detektor wajah: "+err.message);return;}
+ sampleHair();draw();st("Wajah terdeteksi. Atur jaring jika perlu, lalu tekan Buat kepala 3D.");
+ if($('key').value)analyze();};
+
+function px(x,y){const c=pc.getContext('2d').getImageData(Math.max(0,Math.min(pc.width-1,x|0)),Math.max(0,Math.min(pc.height-1,y|0)),1,1).data;return [c[0],c[1],c[2]];}
+function med(a){a.sort((x,y)=>x-y);return a[a.length>>1];}
+function sampleHair(){
+ const t=lm[10],H=Math.hypot(lm[152][0]-t[0],lm[152][1]-t[1]),W=Math.abs(lm[454][0]-lm[234][0]),s=[];
+ for(const dy of[.08,.14,.2])for(const dx of[-.25,0,.25])s.push(px(t[0]+dx*W,t[1]-dy*H));
+ const h=[0,1,2].map(k=>med(s.map(c=>c[k])));
+ $('hc').value="#"+h.map(v=>v.toString(16).padStart(2,"0")).join("");}
+
+function tgt(){const sc=+$('sc').value,tx=+$('tx').value,ty=+$('ty').value,cx=330*K,cy=300*K;
+ return KP.map(([i,x,y])=>[cx+(x-cx)*sc+tx,cy+(y-cy)*sc+ty]);}
+function draw(){
+ const c=$('pv'),w=Math.min(pc.width,900);c.width=w;c.height=pc.height*w/pc.width;
+ const g=c.getContext('2d'),k=w/pc.width;g.drawImage(pc,0,0,c.width,c.height);
+ if(!lm)return;g.fillStyle="#4fd1b5";
+ for(const [i] of KP){g.beginPath();g.arc(lm[i][0]*k,lm[i][1]*k,3,0,7);g.fill();}}
+["sc","tx","ty"].forEach(i=>$(i).oninput=()=>{});
+
+function cc(a,b,c){const d=2*(a[0]*(b[1]-c[1])+b[0]*(c[1]-a[1])+c[0]*(a[1]-b[1]));
+ const ux=((a[0]**2+a[1]**2)*(b[1]-c[1])+(b[0]**2+b[1]**2)*(c[1]-a[1])+(c[0]**2+c[1]**2)*(a[1]-b[1]))/d;
+ const uy=((a[0]**2+a[1]**2)*(c[0]-b[0])+(b[0]**2+b[1]**2)*(a[0]-c[0])+(c[0]**2+c[1]**2)*(b[0]-a[0]))/d;
+ return [ux,uy,(a[0]-ux)**2+(a[1]-uy)**2];}
+function delaunay(P){const n=P.length,V=[...P,[-1e5,-1e5],[1e5,-1e5],[0,1e5]];let T=[[n,n+1,n+2]];
+ for(let i=0;i<n;i++){const bad=[];
+  for(const t of T){const [x,y,r]=cc(V[t[0]],V[t[1]],V[t[2]]);if((V[i][0]-x)**2+(V[i][1]-y)**2<r)bad.push(t);}
+  const ed={};for(const t of bad)for(let k=0;k<3;k++){const a=t[k],b=t[(k+1)%3],key=a<b?a+"_"+b:b+"_"+a;ed[key]=(ed[key]||0)+1;}
+  T=T.filter(t=>!bad.includes(t));
+  for(const key in ed)if(ed[key]===1){const [a,b]=key.split("_").map(Number);T.push([a,b,i]);}}
+ return T.filter(t=>t.every(k=>k<n));}
+function hull(P){P=[...P].sort((a,b)=>a[0]-b[0]||a[1]-b[1]);const cr=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]);
+ const lo=[],up=[];for(const p of P){while(lo.length>1&&cr(lo[lo.length-2],lo[lo.length-1],p)<=0)lo.pop();lo.push(p);}
+ for(const p of [...P].reverse()){while(up.length>1&&cr(up[up.length-2],up[up.length-1],p)<=0)up.pop();up.push(p);}
+ return lo.slice(0,-1).concat(up.slice(0,-1));}
+function tri(g,img,s,d){
+ const cx=(d[0][0]+d[1][0]+d[2][0])/3,cy=(d[0][1]+d[1][1]+d[2][1])/3;
+ g.save();g.beginPath();d.forEach((p,i)=>{const dx=p[0]-cx,dy=p[1]-cy,l=Math.hypot(dx,dy)||1,q=[p[0]+dx/l*.8,p[1]+dy/l*.8];i?g.lineTo(...q):g.moveTo(...q);});g.closePath();g.clip();
+ const det=(s[1][0]-s[0][0])*(s[2][1]-s[0][1])-(s[2][0]-s[0][0])*(s[1][1]-s[0][1]);
+ const a=((d[1][0]-d[0][0])*(s[2][1]-s[0][1])-(d[2][0]-d[0][0])*(s[1][1]-s[0][1]))/det;
+ const c=((d[2][0]-d[0][0])*(s[1][0]-s[0][0])-(d[1][0]-d[0][0])*(s[2][0]-s[0][0]))/det;
+ const b=((d[1][1]-d[0][1])*(s[2][1]-s[0][1])-(d[2][1]-d[0][1])*(s[1][1]-s[0][1]))/det;
+ const dd=((d[2][1]-d[0][1])*(s[1][0]-s[0][0])-(d[1][1]-d[0][1])*(s[2][0]-s[0][0]))/det;
+ g.setTransform(a,b,c,dd,d[0][0]-a*s[0][0]-c*s[0][1],d[0][1]-b*s[0][0]-dd*s[0][1]);g.drawImage(img,0,0);g.restore();}
+
+function patch(g,x,y,r=6){const d=g.getImageData(x-r|0,y-r|0,2*r,2*r).data,m=[0,0,0];let n=0;
+ for(let i=0;i<d.length;i+=4){if(d[i+3]){m[0]+=d[i];m[1]+=d[i+1];m[2]+=d[i+2];n++;}}return m.map(v=>v/(n||1));}
+
+async function analyze(){
+ const key=$('key').value;if(!key||!lm)return;$('gi').textContent="Grok sedang membaca foto…";
+ const t=document.createElement('canvas');t.width=768;t.height=pc.height*768/pc.width;t.getContext('2d').drawImage(pc,0,0,t.width,t.height);
+ const prompt='Look at this photo of a person. Reply with ONLY compact JSON: {"hair_color_hex":"#rrggbb dominant natural hair color ignoring caps/headbands","hair_style":"short description in Indonesian","facial_hair":"none|stubble|mustache|beard","skin_tone_hex":"#rrggbb"}';
+ try{const r=await fetch($('ep').value,{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+  body:JSON.stringify({model:$('mdl').value,temperature:0,messages:[{role:"user",content:[{type:"image_url",image_url:{url:t.toDataURL("image/jpeg",.85)}},{type:"text",text:prompt}]}]})});
+  const j=await r.json();info=JSON.parse(j.choices[0].message.content.match(/\{[\s\S]*\}/)[0]);
+  if(/^#[0-9a-f]{6}$/i.test(info.hair_color_hex))$('hc').value=info.hair_color_hex;
+  $('gi').textContent="Grok: rambut "+info.hair_style+"; jenggot: "+info.facial_hair+"; warna rambut "+info.hair_color_hex;}
+ catch(e){$('gi').textContent="Grok gagal ("+e.message+"). Memakai warna dari piksel foto.";}}
+
+$('go').onclick=async()=>{
+ if(!glb){st("Pilih file template CR7_head_v2.glb dulu.");return;}
+ if(!lm){st("Pilih foto wajah dulu.");return;}
+ st("Memproses tekstur…");await new Promise(r=>setTimeout(r));
+ const A=$('out'),a=A.getContext('2d',{willReadFrequently:true});a.clearRect(0,0,S,S);a.drawImage(atlas,0,0,S,S);
+ const T=tgt(),tr=delaunay(T);
+ // warp wajah foto ke UV
+ const F=document.createElement('canvas');F.width=F.height=S;const f=F.getContext('2d');
+ for(const t of tr)tri(f,pc,t.map(i=>lm[KP[i][0]]),t.map(i=>T[i]));
+ // warna kulit: samakan atlas dengan foto
+ const ref=[[200,370],[450,370],[260,340],[395,340]].map(([x,y])=>[x*K,y*K]);
+ const am=[0,0,0],fm=[0,0,0];ref.forEach(([x,y])=>{const p=patch(a,x,y),q=patch(f,x,y);for(let k=0;k<3;k++){am[k]+=p[k]/4;fm[k]+=q[k]/4;}});
+ const gain=am.map((v,k)=>Math.max(.55,Math.min(1.6,(fm[k]||v)/v)));
+ const id=a.getImageData(0,0,S,S),d=id.data,hex=$('hc').value,hs=+$('hs').value;
+ const C=[1,3,5].map(i=>parseInt(hex.substr(i,2),16));
+ const isH=(x,y,L)=>(x<Q&&y<Q)?(L<95?Math.min(1,(95-L)/25):0):(y<Q&&x>=Q?0:1);
+ let sum=0,cnt=0;
+ for(let y=0;y<S;y++)for(let x=0;x<S;x++){const i=(y*S+x)*4;if(!d[i+3])continue;
+  const L=.3*d[i]+.59*d[i+1]+.11*d[i+2],w=isH(x,y,L);if(w>.9&&L>3){sum+=L;cnt++;}}
+ const mL=(sum/cnt)||40;
+ for(let y=0;y<S;y++)for(let x=0;x<S;x++){const i=(y*S+x)*4;if(!d[i+3])continue;
+  const L=.3*d[i]+.59*d[i+1]+.11*d[i+2],w=isH(x,y,L);
+  if(w<1&&x<Q&&y<Q)for(let k=0;k<3;k++)d[i+k]=Math.min(255,d[i+k]*(1-w)*gain[k]+d[i+k]*w*1);// kulit
+  if(w>0){const r=Math.pow(Math.max(L,1)/mL,.9);for(let k=0;k<3;k++){const n=Math.min(255,C[k]*r*(1+.0));d[i+k]=d[i+k]*(1-w*hs)+n*w*hs;}}}
+ a.putImageData(id,0,0);
+ // tempel wajah dengan tepi halus
+ const H=hull(T),cx=H.reduce((s,p)=>s+p[0],0)/H.length,cy=H.reduce((s,p)=>s+p[1],0)/H.length;
+ const M=document.createElement('canvas');M.width=M.height=S;const m=M.getContext('2d');
+ m.filter="blur(22px)";m.fillStyle="#fff";m.beginPath();H.forEach((p,i)=>{const q=[cx+(p[0]-cx)*.93,cy+(p[1]-cy)*.93];i?m.lineTo(...q):m.moveTo(...q);});m.fill();
+ f.globalCompositeOperation="destination-in";f.drawImage(M,0,0);a.drawImage(F,0,0);
+ A.style.display="block";
+ outBlob=await new Promise(r=>A.toBlob(r,"image/png"));
+ const png=new Uint8Array(await outBlob.arrayBuffer());
+ glbBlob=new Blob([buildGLB(glb,png)],{type:"model/gltf-binary"});
+ const mv=$('mv');mv.style.display="block";mv.src=URL.createObjectURL(glbBlob);
+ $('dg').disabled=$('dp').disabled=false;st("Selesai. Periksa pratinjau 3D, lalu unduh.");};
+
+const dl=(b,n)=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=n;a.click();};
+$('dg').onclick=()=>dl(glbBlob,"kepala_foto.glb");$('dp').onclick=()=>dl(outBlob,"tekstur_kepala.png");
+["sc","tx","ty"].forEach(i=>$(i).addEventListener("input",()=>{}));
+</script></body></html>
